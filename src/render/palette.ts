@@ -1,0 +1,23 @@
+/** Shared colours for the canvas art (the DOM UI uses matching CSS custom properties). */
+export const PALETTE = {
+  earthLight: "#d98f5c",
+  earth: "#c47442",
+  earthDark: "#9c5530",
+  earthDeep: "#7a3f22",
+  chalk: "#fbf6ea",
+  chalkDim: "rgba(251, 246, 234, 0.55)",
+  target: "#ffd23f",
+  hint: "#7ee0a1",
+  fault: "#ff4d4d",
+  ink: "#2b1a12",
+  skin: "#6b3e26",
+  skinShade: "#4e2b19",
+  hair: "#1a110c",
+  shirt: "#1f8a5b",
+  shirtStripe: "#ffd23f",
+  shirtAccent: "#e4572e",
+  sandal: "#2f6fd6",
+  stone: "#8a8f96",
+  stoneLight: "#c4c8cc",
+  stoneDark: "#55595f",
+} as const

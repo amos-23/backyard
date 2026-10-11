@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#9c5530" />
+    <meta name="description" content="Suwe — throw your stone, hop the chalk squares and become the yard's Suwe Oga." />
+    <title>Suwe</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <!-- Vatar Games SDK v1. Always loaded from Vatar (never a copy) so it receives security fixes.
+         async: the game renders immediately; src/platform/load-sdk.ts waits for it before connecting. -->
+    <script id="vatar-sdk" async src="https://lagoslife.app/sdk/vatar-games-v1.js"></script>
+  </head>
+  <body>
+    <div id="app" aria-live="polite">
+      <div class="boot">
+        <div class="boot-logo">Suwe</div>
+        <noscript>Suwe needs JavaScript to play.</noscript>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

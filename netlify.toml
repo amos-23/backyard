@@ -1,0 +1,4 @@
+# Headers live in public/_headers (copied into dist/ by Vite).
+[build]
+  command = "npm run build"
+  publish = "dist"
