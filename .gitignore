@@ -7,3 +7,7 @@ dist
 .DS_Store
 test-results
 e2e/screenshots
+
+# Local Netlify folder
+.netlify
+.netlify

@@ -49,5 +49,7 @@ export const ICONS = {
   wind: svg('<path d="M3 8h10a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h7"/>'),
   cloudOff: svg('<path d="M7 18h10a4 4 0 0 0 .7-7.9A6 6 0 0 0 6.2 9 4.5 4.5 0 0 0 7 18z"/><path d="M4 4l16 16"/>'),
   check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
+  palette: svg('<path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.2 0 1.8-.8 1.8-1.7 0-1.3-1.1-1.6-1.1-2.7 0-.9.7-1.6 1.7-1.6h2.1a4 4 0 0 0 4-4C20.5 6.6 16.7 3.5 12 3.5z"/><circle cx="7.6" cy="11" r="1.2" fill="currentColor"/><circle cx="10" cy="7.3" r="1.2" fill="currentColor"/><circle cx="14.5" cy="7.3" r="1.2" fill="currentColor"/>'),
+  lock: svg('<rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8.2 10.5V8a3.8 3.8 0 0 1 7.6 0v2.5"/>'),
   stone: `<svg viewBox="0 0 24 24"><path d="M5 13c-.5-3.5 2.5-6.5 7-6.5s7.8 2.3 7.5 5.8c-.3 3.4-3.7 5.2-7.8 5.2S5.4 16.2 5 13z" fill="#8a8f96" stroke="#55595f" stroke-width="1.5"/><path d="M8.5 12.5c2-1 4.5-1.2 7-.3" stroke="#fff" stroke-opacity=".5" stroke-width="1.2" fill="none"/></svg>`,
 } as const

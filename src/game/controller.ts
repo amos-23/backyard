@@ -1,4 +1,5 @@
 import type { Sound } from "../audio/sound"
+import type { ChalkPalette } from "../config/chalk"
 import type { LevelConfig } from "../config/levels"
 import type { SuweRules } from "../config/rules"
 import { type Board, type Vec, cellCenter, getCell, restCenter, startCenter } from "../core/board"
@@ -50,6 +51,8 @@ export interface ControllerOptions {
   rng: Rng
   sound: Sound
   forgiving?: boolean
+  /** Cosmetic chalk colours for the board (default classic white). */
+  chalk?: ChalkPalette
   insetTop: number
   insetBottom: number
 }
@@ -174,7 +177,7 @@ export class GameController {
     this.canvas.width = Math.round(rect.width * this.dpr)
     this.canvas.height = Math.round(rect.height * this.dpr)
     this.vp.fit(this.opts.board, rect.width, rect.height, this.opts.insetTop, this.opts.insetBottom)
-    this.staticLayer = renderStaticLayer(this.opts.board, this.vp, this.dpr)
+    this.staticLayer = renderStaticLayer(this.opts.board, this.vp, this.dpr, this.opts.chalk)
   }
 
   /**
@@ -192,6 +195,7 @@ export class GameController {
       lives: s.lives,
       score: s.score,
       balance: s.balance,
+      chalk: this.opts.chalk?.id ?? "classic",
       level: this.session.level.level,
       scale: this.vp.scale,
       origin: pt(board.throwOrigin),

@@ -1,12 +1,15 @@
 import type { Sound } from "./audio/sound"
 import { LAGOS_CLASSIC } from "./config/board"
+import { effectiveChalk } from "./config/chalk"
 import { LEVELS, STARTING_LIVES, TUTORIAL_LEVEL } from "./config/levels"
 import { TRADITIONAL_RULES } from "./config/rules"
 import { buildBoard } from "./core/board"
 import type { LevelSummary } from "./core/session"
 import { GameController, type HudState } from "./game/controller"
 import type { Platform } from "./platform/platform"
+import type { ChalkShop } from "./shop/chalk-shop"
 import type { Storage } from "./storage/storage"
+import { chalkScreen } from "./ui/chalk-screen"
 import { h, icon } from "./ui/dom"
 import {
   type GameShell,
@@ -50,6 +53,7 @@ export class App {
     private readonly platform: Platform,
     private readonly sound: Sound,
     private readonly storage: Storage,
+    private readonly shop: ChalkShop,
   ) {
     platform.onPause(() => {
       this.hostPaused = true
@@ -90,6 +94,9 @@ export class App {
       }
     }
     void this.platform.connect()
+    // Rechecks ownership with our server and restores interrupted purchases. Failures only affect
+    // the cosmetic pack; the game itself never waits on it.
+    void this.shop.start()
     this.showHome()
   }
 
@@ -119,6 +126,7 @@ export class App {
         onPlay: () => this.play(),
         onHowTo: () => this.showHowTo(),
         onLeaderboard: () => this.showLeaderboard(),
+        onChalk: () => this.showChalk(),
         onToggleMute: () => {
           this.toggleMute()
           this.showHome()
@@ -126,6 +134,27 @@ export class App {
       }),
       "home",
     )
+  }
+
+  private showChalk(): void {
+    const screen = chalkScreen({
+      rows: LAGOS_CLASSIC.rows,
+      selected: this.storage.getSettings().chalk,
+      onSelect: (id) => this.storage.updateSettings({ chalk: id }),
+      onBuy: () => void this.shop.buy(),
+      onRetry: () => void this.shop.retry(),
+      onBack: () => {
+        this.shop.dismiss()
+        this.showHome()
+      },
+      onPlay: () => {
+        this.shop.dismiss()
+        this.play()
+      },
+    })
+    this.mount(screen.root, "chalk")
+    screen.render(this.shop.state)
+    this.viewCleanups.push(this.shop.onChange((s) => screen.render(s)))
   }
 
   private showHowTo(): void {
@@ -187,6 +216,8 @@ export class App {
         rng: Math.random,
         sound: this.sound,
         forgiving: tutorial,
+        // Cosmetic only. A pack colour is drawn only while the server-verified pack is owned.
+        chalk: effectiveChalk(settings.chalk, this.shop.owned),
         insetTop: hudHeight + 10,
         insetBottom: 76,
       },

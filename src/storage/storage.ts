@@ -13,6 +13,8 @@ export interface LocalScore {
 export interface Settings {
   muted: boolean
   tutorialDone: boolean
+  /** Chosen chalk palette id. Premium palettes only render while the pack is verified as owned. */
+  chalk: string
 }
 
 const memory = new Map<string, string>()
@@ -51,8 +53,11 @@ const isNumber = (v: unknown): v is number => typeof v === "number" && Number.is
 const isScore = (v: unknown): v is LocalScore =>
   !!v && typeof v === "object" && isNumber((v as LocalScore).score) && isNumber((v as LocalScore).level) && isNumber((v as LocalScore).date)
 const isScoreList = (v: unknown): v is LocalScore[] => Array.isArray(v) && v.every(isScore)
-const isSettings = (v: unknown): v is Settings =>
+const isSettings = (v: unknown): v is Partial<Settings> & Pick<Settings, "muted" | "tutorialDone"> =>
   !!v && typeof v === "object" && typeof (v as Settings).muted === "boolean" && typeof (v as Settings).tutorialDone === "boolean"
+const isOwnedMap = (v: unknown): v is Record<string, string[]> =>
+  !!v && typeof v === "object" && !Array.isArray(v) && Object.values(v).every((x) => Array.isArray(x) && x.every((y) => typeof y === "string"))
+const DEFAULT_SETTINGS: Settings = { muted: false, tutorialDone: false, chalk: "classic" }
 
 export const MAX_LOCAL_SCORES = 10
 
@@ -88,7 +93,24 @@ export const storage = {
   },
 
   getSettings(): Settings {
-    return readJson("settings", { muted: false, tutorialDone: false }, isSettings)
+    const v = readJson("settings", DEFAULT_SETTINGS, isSettings)
+    // Older saves have no chalk field.
+    return { ...DEFAULT_SETTINGS, ...v, chalk: typeof v.chalk === "string" ? v.chalk : DEFAULT_SETTINGS.chalk }
+  },
+
+  /**
+   * Last server-confirmed purchases per player ("mode:playerId"), so a known owner sees their
+   * colours instantly while the server re-check runs. A display cache only: ownership itself is
+   * decided by the server, and this is overwritten by every server answer.
+   */
+  getCachedOwned(key: string): string[] {
+    return readJson("owned", {}, isOwnedMap)[key] ?? []
+  },
+
+  setCachedOwned(key: string, products: string[]): void {
+    const map = readJson("owned", {}, isOwnedMap)
+    map[key] = products
+    write("owned", JSON.stringify(map))
   },
 
   updateSettings(patch: Partial<Settings>): Settings {

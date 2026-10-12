@@ -1,6 +1,6 @@
 import type { LocalScore } from "../storage/storage"
 import { type Clock, ScoreQueue, type SubmissionStatus, realClock } from "./score-queue"
-import { type VatarErrorCode, type VatarLeaderboard, type VatarSdk, errorCode } from "./vatar-types"
+import { type VatarErrorCode, type VatarLeaderboard, type VatarPurchaseRef, type VatarSdk, errorCode } from "./vatar-types"
 
 /**
  * The one place the game talks to the Vatar host. Everything else sees this small interface,
@@ -18,6 +18,8 @@ export interface PlatformStatus {
 }
 
 export interface PlayerInfo {
+  /** Per-game pseudonym from init() (t_… in the sandbox, p_… live). */
+  id: string
   name: string
   avatar: string | null
 }
@@ -52,6 +54,7 @@ export class Platform {
   private statusListeners = new Set<(s: PlatformStatus) => void>()
   private pauseListeners = new Set<() => void>()
   private resumeListeners = new Set<() => void>()
+  private purchaseListeners = new Set<(p: VatarPurchaseRef) => void>()
   private cache: { board: VatarLeaderboard; at: number } | null = null
   private inflightBoard: Promise<LeaderboardResult> | null = null
   private connecting: Promise<PlatformStatus> | null = null
@@ -72,6 +75,7 @@ export class Platform {
         // game or a world sheet covers it.
         s.onPause(() => this.pauseListeners.forEach((fn) => fn()))
         s.onResume(() => this.resumeListeners.forEach((fn) => fn()))
+        s.onPurchase((p) => this.purchaseListeners.forEach((fn) => fn(p)))
       }
       return s
     })
@@ -105,7 +109,7 @@ export class Platform {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const r = await sdk.init()
-        this.playerValue = { name: r.player.name, avatar: r.player.avatar }
+        this.playerValue = { id: r.player.id, name: r.player.name, avatar: r.player.avatar }
         this.setStatus({ state: "connected", mode: r.mode, message: null })
         this.queue.enable()
         return this.statusValue
@@ -128,6 +132,33 @@ export class Platform {
     this.queue.disableLocal()
     this.setStatus({ state: "local", mode: null, message: messageFor(code) })
     return this.statusValue
+  }
+
+  // ---------------------------------------------------------------- purchases (documented SDK calls)
+
+  /** A fresh 15-minute session token to send to our own server. */
+  async sessionToken(): Promise<string> {
+    return (await this.requireConnected().session()).session
+  }
+
+  /** Opens Vatar's pay sheet. Rejects with an Error whose .code is a documented SDK error code. */
+  purchase(productId: string): Promise<VatarPurchaseRef> {
+    return this.requireConnected().purchase(productId)
+  }
+
+  /** Paid purchases our server hasn't marked delivered yet (to restore after a crash or reload). */
+  pendingPurchases(): Promise<VatarPurchaseRef[]> {
+    return this.requireConnected().purchases()
+  }
+
+  onPurchase(fn: (p: VatarPurchaseRef) => void): () => void {
+    this.purchaseListeners.add(fn)
+    return () => this.purchaseListeners.delete(fn)
+  }
+
+  private requireConnected(): VatarSdk {
+    if (!this.isConnected) throw Object.assign(new Error("Vatar: not_framed"), { code: "not_framed" })
+    return this.requireSdk()
   }
 
   /** Queue a score for the leaderboard. Call at milestones (level complete, end of run), not per frame. */
