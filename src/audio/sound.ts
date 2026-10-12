@@ -15,6 +15,11 @@ export class Sound {
     this.mutedValue = muted
   }
 
+  /** True while suspended by a pause (independent of mute). */
+  get isPaused(): boolean {
+    return this.paused
+  }
+
   get muted(): boolean {
     return this.mutedValue
   }

@@ -48,7 +48,7 @@ export function submissionText(s: SubmissionStatus, status: PlatformStatus): { t
     case "sent":
       return s.accepted
         ? { text: `${sandbox}Posted ${fmt(s.score)} to the leaderboard. Your best there: ${fmt(s.best)}.`, tone: "ok" }
-        : { text: `${sandbox}Leaderboard updated. Your best there is still ${fmt(s.best)}.`, tone: "ok" }
+        : { text: `${sandbox}Score ${fmt(s.score)} received. It didn't beat your leaderboard best of ${fmt(s.best)}.`, tone: "ok" }
     case "failed":
       return { text: `Couldn't post your score (${s.code.replace("_", " ")}). It's saved on this device.`, tone: "warn" }
     case "local":
@@ -99,7 +99,7 @@ export function homeScreen(p: HomeProps): HTMLElement {
     h(
       "div",
       { class: "home-info" },
-      p.player
+      p.player?.name
         ? h("p", { class: "greeting" }, p.player.avatar ? h("img", { src: p.player.avatar, alt: "", class: "avatar" }) : null, `Welcome, ${p.player.name}!`)
         : null,
       h(
@@ -350,7 +350,7 @@ function localList(scores: LocalScore[]): HTMLElement {
   )
 }
 
-export function leaderboardContent(r: LeaderboardResult, onRetry: () => void): HTMLElement {
+export function leaderboardContent(r: LeaderboardResult, onRetry: () => void, playerName?: string): HTMLElement {
   if (r.source === "local") {
     return h(
       "div",
@@ -376,7 +376,7 @@ export function leaderboardContent(r: LeaderboardResult, onRetry: () => void): H
     null,
     r.stale ? h("div", { class: "notice notice-warn" }, h("p", null, "Showing the last leaderboard we loaded — couldn't refresh it just now.")) : null,
     me
-      ? h("div", { class: "me-card", "data-testid": "my-rank" }, h("span", null, "Your place"), h("strong", null, me.label), h("span", { class: "score" }, fmt(me.score)))
+      ? h("div", { class: "me-card", "data-testid": "my-rank" }, h("span", null, playerName ? `${playerName} · your place` : "Your place"), h("strong", null, me.label), h("span", { class: "score" }, fmt(me.score)))
       : h("div", { class: "me-card muted" }, h("span", null, "Finish a level to get on the board")),
     top.length === 0
       ? h("div", { class: "lb-state empty" }, icon("trophy", "empty-icon"), h("p", null, "No scores yet. Be the first on the board!"))
