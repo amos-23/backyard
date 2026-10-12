@@ -93,6 +93,21 @@ const greeting = await game.locator(".greeting").textContent()
 check("shows the Vatar player's display name", /Tolu/.test(greeting), greeting)
 await page.screenshot({ path: `${process.env.SHOTS ?? "e2e/screenshots"}/20-framed-home.png` })
 
+const soundPaused = () => frame().evaluate(() => window.__suwe.soundPaused())
+const setHidden = (hidden) =>
+  frame().evaluate((h) => {
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => h })
+    document.dispatchEvent(new Event("visibilitychange"))
+  }, hidden)
+
+// Host pause on a menu: sound stays off until the host resumes, even if the page becomes visible.
+await page.evaluate(() => window.hostPause())
+await setHidden(false)
+const heldOnMenu = await soundPaused()
+await page.evaluate(() => window.hostResume())
+await page.waitForTimeout(100)
+check("menu sound pauses on onPause and only returns on onResume", heldOnMenu && !(await soundPaused()))
+
 // Leaderboard before any score.
 await game.locator('[data-testid="leaderboard"]').click()
 await game.locator(".lb-list li").first().waitFor()
@@ -142,24 +157,54 @@ const sub = await game.locator('[data-testid="submission-status"]').textContent(
 check("level-complete score is posted to the sandbox leaderboard", true, sub)
 await page.screenshot({ path: `${process.env.SHOTS ?? "e2e/screenshots"}/21-framed-level-complete.png` })
 
-// Host pause: the game shows its pause overlay and freezes.
+// Host pause while the level-complete dialog is up must not leave sound stuck off afterwards.
+await page.evaluate(() => window.hostPause())
+await page.waitForTimeout(100)
+const offDuringSheet = await soundPaused()
+await page.evaluate(() => window.hostResume())
+await page.waitForTimeout(100)
+check("sound recovers after a host pause on the level-complete dialog", offDuringSheet && !(await soundPaused()))
+
+// Host pause mid-hop: the balance timer and sound freeze until the player resumes.
 await game.locator('[data-testid="next-level"]').click()
-await waitPhase(["aiming"])
+for (let attempt = 0; attempt < 5; attempt++) {
+  await waitPhase(["aiming"])
+  await page.waitForTimeout(400)
+  const i = await info()
+  const o = await canvasOffset()
+  const from = { x: o.x + i.origin.x, y: o.y + i.origin.y }
+  const t = i.cells[i.target]
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(from.x + (t.x - i.origin.x) / AIM_GAIN, from.y + (t.y - i.origin.y) / AIM_GAIN, { steps: 6 })
+  await page.mouse.up()
+  await waitPhase(["hopping", "fault"])
+  if ((await info()).phase === "hopping") break
+}
 await page.evaluate(() => window.hostPause())
 await game.locator('[data-testid="resume"]').waitFor({ timeout: 3000 })
-check("host onPause pauses the game", true)
+const frozenAt = (await info()).balance
+await page.waitForTimeout(1200)
+const stillFrozen = (await info()).balance === frozenAt && (await info()).phase === "hopping"
+const soundOff = await soundPaused()
 await page.evaluate(() => window.hostResume())
+await page.waitForTimeout(300)
+const waitsForTap = (await info()).balance === frozenAt && (await soundPaused())
+check("host onPause shows the pause menu and freezes the balance timer and sound", stillFrozen && soundOff, `balance ${frozenAt.toFixed(2)}`)
+check("after onResume the run stays frozen until the player taps Resume", waitsForTap)
 await game.locator('[data-testid="resume"]').click()
+await page.waitForTimeout(500)
+const after = await info()
+check("tapping Resume restarts the timer and sound", (after.balance < frozenAt || after.phase !== "hopping") && !(await soundPaused()))
 
 // Quitting soon after submits again, but only after the 20 s window, and only once.
 await page.evaluate(() => (window.forceTooSoon = 0))
 const before = await page.evaluate(() => window.vatarLog.filter((m) => m.t === "score").length)
-await frame().evaluate(() => {
-  Object.defineProperty(document, "hidden", { configurable: true, get: () => true })
-  document.dispatchEvent(new Event("visibilitychange"))
-})
+await setHidden(true)
 await game.locator('[data-testid="quit"]').click()
 await page.waitForTimeout(1500)
+await setHidden(false)
+check("quitting to home from the pause menu doesn't leave sound stuck off", !(await soundPaused()))
 const mid = await page.evaluate(() => window.vatarLog.filter((m) => m.t === "score"))
 check("no second score inside the 20 s window", mid.length === before, `${mid.length} score messages`)
 

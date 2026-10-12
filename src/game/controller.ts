@@ -191,6 +191,7 @@ export class GameController {
       step: this.session.currentStep,
       lives: s.lives,
       score: s.score,
+      balance: s.balance,
       level: this.session.level.level,
       scale: this.vp.scale,
       origin: pt(board.throwOrigin),

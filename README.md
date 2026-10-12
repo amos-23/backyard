@@ -171,8 +171,9 @@ this MVP doesn't use.
 
 ## Vatar sandbox testing
 
-1. **Deploy** `dist/` to an HTTPS address with the headers above. Check them with
-   `curl -I https://your-domain/`.
+1. **Deploy** `dist/` to an HTTPS address with the headers above. Check that the address serves
+   Suwe (the page title is "Suwe") and sends the header, with
+   `curl -sI https://your-domain/ | grep -i frame-ancestors`.
 2. **Register.** Go to https://lagoslife.app/developers and choose *Get your keys*. Enter the
    studio, contact email, game name "Suwe", the HTTPS address and a one-line description. Store the
    test secret it shows you somewhere safe. This game doesn't need it, but you'll want it if you
@@ -206,7 +207,7 @@ These steps can't be done from this repo:
 
 ## Testing notes
 
-- **Unit tests (44):**
+- **Unit tests (48):**
   - geometry and layouts;
   - throw judging (in, wrong square, line, rest area, off-board, accidental taps, range clamp);
   - hop paths for each rule variant;
@@ -218,14 +219,17 @@ These steps can't be done from this repo:
   - a deterministic play-through of all ten levels;
   - the rate-limited score queue and the SDK adapter (local fallback, async SDK load, caching,
     errors, pause/resume);
-  - storage, including corrupted data.
+  - storage, including corrupted data;
+  - score-status wording, which only says "posted" once the SDK confirms an accepted score.
 - **`e2e/smoke.mjs`:** plays the tutorial by touch swipes and taps, clears level 1, forces faults
   until game over, then tests retry, pausing on page hide, the personal best across reloads, the
   local leaderboard and skipping the tutorial. It also runs a desktop mouse round with
   no-scroll checks and a 360 × 640 layout check.
 - **`e2e/host.mjs`:** runs the game inside a mock game player at `https://lagoslife.app/…` with the
-  real SDK. It checks sandbox mode, the player name, the leaderboard, score posting, host pause,
-  the 20 s submission spacing and the `frame-ancestors` header.
+  real SDK. It checks sandbox mode, the player name, the leaderboard, score posting, the 20 s
+  submission spacing and the `frame-ancestors` header. For `onPause`/`onResume` it checks that the
+  balance timer and sound freeze, that the run waits for a Resume tap, and that sound never stays
+  stuck off after a pause on a menu or dialog.
 - **Debug hook:** adding `?debug` to the URL exposes a read-only `window.__suwe.info()` (screen
   positions of squares, the current phase) so the browser tests can aim. It can't change game
   state.

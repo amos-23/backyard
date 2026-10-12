@@ -42,6 +42,8 @@ export class App {
   private run = { recorded: true, bestAtStart: 0 }
   private screen = "boot"
   private leaderboardToken = 0
+  /** Between Vatar.onPause and Vatar.onResume (phone backgrounded, or a world sheet over the game). */
+  private hostPaused = false
 
   constructor(
     private readonly root: HTMLElement,
@@ -49,17 +51,22 @@ export class App {
     private readonly sound: Sound,
     private readonly storage: Storage,
   ) {
-    platform.onPause(() => this.pauseGame())
+    platform.onPause(() => {
+      this.hostPaused = true
+      this.pauseGame()
+    })
     platform.onResume(() => {
-      // In a run, the pause overlay stays up until the player taps Resume (timers stay frozen).
-      if (!this.controller) this.sound.resume()
+      // In a run, the pause overlay stays up until the player taps Resume, so timers stay frozen
+      // and nothing is missed. Outside a run, sound simply comes back.
+      this.hostPaused = false
+      this.syncSound()
     })
     platform.onStatus(() => {
       if (this.screen === "home") this.showHome()
     })
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) this.pauseGame()
-      else if (!this.controller) this.sound.resume()
+      else this.syncSound()
     })
     window.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && this.controller) {
@@ -76,7 +83,11 @@ export class App {
 
   start(): void {
     if (new URLSearchParams(location.search).has("debug")) {
-      ;(window as unknown as { __suwe: unknown }).__suwe = { info: () => this.controller?.debugInfo() ?? null, screen: () => this.screen }
+      ;(window as unknown as { __suwe: unknown }).__suwe = {
+        info: () => this.controller?.debugInfo() ?? null,
+        screen: () => this.screen,
+        soundPaused: () => this.sound.isPaused,
+      }
     }
     void this.platform.connect()
     this.showHome()
@@ -93,6 +104,7 @@ export class App {
     this.overlay = "none"
     this.screen = name
     this.root.replaceChildren(el)
+    this.syncSound()
   }
 
   showHome(): void {
@@ -141,7 +153,7 @@ export class App {
       body.replaceChildren(leaderboardLoading())
       const result = await this.platform.leaderboard()
       if (token !== this.leaderboardToken || this.screen !== "leaderboard") return // navigated away
-      body.replaceChildren(leaderboardContent(result, () => void load()))
+      body.replaceChildren(leaderboardContent(result, () => void load(), this.platform.player?.name || undefined))
     }
     await load()
   }
@@ -302,9 +314,8 @@ export class App {
   // ---------------------------------------------------------------- pause & sound
 
   private pauseGame(): void {
-    this.sound.pause()
     const c = this.controller
-    if (!c || this.overlay !== "none") return
+    if (!c || this.overlay !== "none") return this.syncSound()
     c.pause()
     this.showOverlay(
       pauseModal(
@@ -319,13 +330,24 @@ export class App {
       ),
       "pause",
     )
+    this.syncSound()
   }
 
   private resumeGame(): void {
     if (this.overlay !== "pause") return
     this.clearOverlay()
-    this.sound.resume()
     this.controller?.resume()
+    this.syncSound()
+  }
+
+  /**
+   * Sound plays only while the host hasn't paused us, the page is visible and the pause menu is
+   * closed. Every pause/resume path funnels through here, so sound can never stay stuck off (or
+   * come back while the host still has the game paused).
+   */
+  private syncSound(): void {
+    if (this.hostPaused || document.hidden || this.overlay === "pause") this.sound.pause()
+    else this.sound.resume()
   }
 
   private toggleMute(): void {
