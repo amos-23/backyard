@@ -10,6 +10,12 @@
 import { chromium } from "playwright"
 import { readFileSync, existsSync } from "node:fs"
 import { extname, join } from "node:path"
+// The real server code (TypeScript, loaded via Node's type stripping) and the documented-contract
+// stand-in for Vatar's HTTP API that the unit tests use.
+import { handleClaim, handleEntitlements } from "../server/http.ts"
+import { blobEntitlementStore, memoryBlobs } from "../server/entitlements.ts"
+import { createVatarApi } from "../server/vatar-api.ts"
+import { fakeVatar } from "../tests/helpers/fake-vatar.ts"
 
 const DIST = new URL("../dist/", import.meta.url).pathname
 const GAME = "https://suwe.test/"
@@ -43,8 +49,21 @@ const hostPage = `<!doctype html><meta name="viewport" content="width=device-wid
       const me = best ? { rank: top.findIndex((x) => x.name === "Tolu") + 1, label: "#" + (top.findIndex((x) => x.name === "Tolu") + 1), score: best } : null
       return reply(true, { top, me })
     }
+    if (m.t === "session") return reply(true, { session: "vtr1.test", exp: Date.now() + 900000 })
+    if (m.t === "purchases") return window.vatarPending().then((list) => reply(true, list))
+    if (m.t === "purchase") {
+      // Like the real game player: the pay sheet pauses the game, then Pay (test) / Fail (test) / close.
+      frame.contentWindow.postMessage({ ll: 1, t: "pause" }, "https://suwe.test")
+      return setTimeout(async () => {
+        frame.contentWindow.postMessage({ ll: 1, t: "resume" }, "https://suwe.test")
+        if (window.purchaseMode === "cancel") return reply(false, null, "cancelled")
+        if (window.purchaseMode === "fail") return reply(false, null, "payment_failed")
+        reply(true, await window.vatarPay(m.productId))
+      }, 400)
+    }
     reply(false, null, "bad_request")
   })
+  window.purchaseMode = "pay"
   window.hostPause = () => frame.contentWindow.postMessage({ ll: 1, t: "pause" }, "https://suwe.test")
   window.hostResume = () => frame.contentWindow.postMessage({ ll: 1, t: "resume" }, "https://suwe.test")
 </script>`
@@ -62,9 +81,33 @@ await context.route("https://lagoslife.app/sdk/vatar-games-v1.js", async (route)
   return route.continue()
 })
 await context.route(HOST, (route) => route.fulfill({ body: hostPage, contentType: "text/html" }))
+// Vatar's side of the purchase: purchases made on the mock pay sheet exist in the same records
+// that the (mock) Vatar API answers GET /purchases/{id} and /deliver from.
+const vatar = fakeVatar()
+vatar.sessions.set("vtr1.test", { playerId: "t_abc", name: "Tolu", mode: "test" })
+const serverDeps = { api: createVatarApi(vatar.SECRET, vatar.fetchImpl), store: blobEntitlementStore(memoryBlobs()) }
+const api = { down: false, claims: 0 }
+let purchaseSeq = 0
+await context.exposeFunction("vatarPay", (productId) => {
+  const id = `pur_e2e_${++purchaseSeq}`
+  vatar.addPurchase(id, { productId, playerId: "t_abc" })
+  return { purchaseId: id, productId }
+})
+await context.exposeFunction("vatarPending", () =>
+  [...vatar.purchases.values()].filter((p) => p.status === "paid" && p.playerId === "t_abc").map((p) => ({ purchaseId: p.id, productId: p.productId })),
+)
+
 let frameHeaders = null
-await context.route(`${GAME}**`, (route) => {
+await context.route(`${GAME}**`, async (route) => {
   const path = new URL(route.request().url()).pathname
+  if (path.startsWith("/api/")) {
+    if (path === "/api/claim") api.claims++
+    if (api.down) return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ ok: false, error: "unavailable", retryable: true }) })
+    const r = route.request()
+    const req = new Request(r.url(), { method: r.method(), headers: r.headers(), body: r.method() === "POST" ? r.postData() : undefined })
+    const res = await (path === "/api/claim" ? handleClaim : handleEntitlements)(req, serverDeps)
+    return route.fulfill({ status: res.status, contentType: "application/json", body: await res.text() })
+  }
   const file = join(DIST, path === "/" ? "index.html" : path)
   if (!existsSync(file)) return route.fulfill({ status: 404, body: "not found" })
   const headers = { "Content-Security-Policy": readFrameAncestors() }
@@ -214,6 +257,82 @@ const gaps = scores.slice(1).map((m, k) => m.at - scores[k].at)
 check("score submissions respect the 20 s limit", gaps.every((g) => g >= 20000), JSON.stringify(gaps))
 const lbCalls = log.filter((m) => m.t === "leaderboard").length
 check("leaderboard requests stay within limits", lbCalls <= 2, `${lbCalls} calls`)
+
+// ---------------------------------------------------------------- Colourful Chalk Pack purchase
+const SHOTS = process.env.SHOTS ?? "e2e/screenshots"
+const delivered = () => vatar.calls.filter((c) => c.endsWith("/deliver")).length
+const ownedCard = () => game.locator('[data-testid="chalk-owned"]').count()
+const buy = () => game.locator('[data-testid="chalk-buy"]:not([disabled])').click()
+await game.locator('[data-testid="chalk"]').click()
+await game.locator('[data-testid="chalk-buy"]:not([disabled])').waitFor({ timeout: 8000 })
+const offer = await game.locator('[data-testid="chalk-offer"]').textContent()
+check("pack offer shows name, ₦100 price and that it's cosmetic", /Colourful Chalk Pack/.test(offer) && /₦100/.test(offer) && /Cosmetic only/.test(offer))
+await game.locator('[data-testid="swatch-rainbow"]').click()
+const previewing = (await game.locator('[data-testid="chalk-preview"]').getAttribute("data-palette")) === "rainbow"
+check("locked colours can be previewed before buying", previewing && /Previewing/.test(await game.locator(".chalk-caption").textContent()))
+await page.screenshot({ path: `${SHOTS}/30-chalk-offer.png` })
+
+await page.evaluate(() => (window.purchaseMode = "cancel"))
+let claimsBefore = api.claims
+await buy()
+await game.getByText("Purchase cancelled").waitFor({ timeout: 5000 })
+check("cancelled payment: pack stays locked and nothing is claimed", api.claims === claimsBefore && (await ownedCard()) === 0)
+
+await page.waitForTimeout(3100) // the SDK allows one purchase request every 3 s
+await page.evaluate(() => (window.purchaseMode = "fail"))
+await buy()
+await game.getByText("didn't go through").waitFor({ timeout: 5000 })
+check("failed payment: pack stays locked and nothing is claimed", api.claims === claimsBefore && (await ownedCard()) === 0)
+
+await page.waitForTimeout(3100)
+await page.evaluate(() => (window.purchaseMode = "pay"))
+api.down = true
+await buy()
+await game.locator('[data-testid="chalk-buy"]', { hasText: "Confirming" }).waitFor({ timeout: 5000 })
+const lockedWhileVerifying = (await ownedCard()) === 0
+await game.locator('[data-testid="chalk-retry"]').waitFor({ timeout: 20000 })
+check("paid but our server unreachable: still locked, Try again offered", lockedWhileVerifying && (await ownedCard()) === 0 && vatar.purchases.get("pur_e2e_1")?.status === "paid")
+await page.screenshot({ path: `${SHOTS}/31-chalk-unverified.png` })
+api.down = false
+await game.locator('[data-testid="chalk-retry"]').click()
+await game.locator('[data-testid="chalk-owned"]').waitFor({ timeout: 8000 })
+const vatarCalls = vatar.calls.join(" | ")
+check(
+  "server verifies session + purchase, then marks it delivered; pack unlocks",
+  /POST \/session\/verify/.test(vatarCalls) && /GET \/purchases\/pur_e2e_1/.test(vatarCalls) && vatar.purchases.get("pur_e2e_1")?.status === "delivered" && delivered() === 1,
+)
+const savedChalk = await frame().evaluate(() => JSON.parse(localStorage.getItem("suwe.v1.settings") ?? "{}").chalk)
+check("the previewed colour is applied once the pack is verified", savedChalk === "rainbow", savedChalk)
+await page.screenshot({ path: `${SHOTS}/32-chalk-owned.png` })
+
+const replayReq = () => new Request(`${GAME}api/claim`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session: "vtr1.test", purchaseId: "pur_e2e_1" }) })
+const replay = await (await handleClaim(replayReq(), serverDeps)).json()
+check("repeating the delivery request grants nothing new", replay.ok && replay.alreadyClaimed === true && delivered() === 1)
+
+await game.locator('[data-testid="chalk-play"]').click()
+const skip = game.locator('[data-testid="skip-tutorial"]')
+if (await skip.count()) await skip.click()
+await waitPhase(["aiming"])
+check("the game board is drawn in the owned colours", (await info()).chalk === "rainbow")
+await page.waitForTimeout(1300)
+await page.screenshot({ path: `${SHOTS}/33-game-rainbow-mobile.png` })
+
+// A returning owner on a fresh device: no local data, and Vatar.purchases() is empty (delivered).
+await frame().evaluate(() => localStorage.clear())
+await page.reload()
+await game.locator('[data-screen="home"]').waitFor()
+await game.locator('[data-testid="chalk"]').click()
+await game.locator('[data-testid="chalk-owned"]').waitFor({ timeout: 8000 })
+check("returning owner is restored from the server with empty local storage", (await page.evaluate(() => window.vatarPending())).length === 0)
+
+for (const [name, size] of [["34-chalk-small", { width: 360, height: 640 }], ["35-chalk-desktop", { width: 1366, height: 800 }]]) {
+  await page.setViewportSize(size)
+  await page.waitForTimeout(300)
+  const fits = await frame().evaluate(() => document.documentElement.scrollWidth <= innerWidth)
+  check(`chalk screen fits ${size.width}×${size.height} without sideways scrolling`, fits)
+  await page.screenshot({ path: `${SHOTS}/${name}.png` })
+}
+
 check("no page errors", errors.length === 0, errors.join(" | "))
 
 await browser.close()

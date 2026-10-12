@@ -2,3 +2,13 @@
 [build]
   command = "npm run build"
   publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# Purchase verification (POST /api/claim, POST /api/entitlements). Each function declares its own
+# path. Needs the VATAR_SECRET environment variable (Functions scope); entitlements are kept in
+# Netlify Blobs (store "suwe-entitlements"), which needs no setup on Netlify.
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"

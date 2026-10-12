@@ -1,3 +1,4 @@
+import { type ChalkPalette, CHALK_PALETTES, chalkColor } from "../config/chalk"
 import type { Board, Vec } from "../core/board"
 import { seededRng } from "../core/rng"
 import { PALETTE } from "./palette"
@@ -7,14 +8,14 @@ import type { Viewport } from "./viewport"
  * Draws the static scene once per resize: warm laterite ground with grit, pebbles and grass at the
  * edges, then the chalk-drawn Suwe board. Everything is procedural so nothing has to load.
  */
-export function renderStaticLayer(board: Board, vp: Viewport, dpr: number): HTMLCanvasElement {
+export function renderStaticLayer(board: Board, vp: Viewport, dpr: number, palette: ChalkPalette = CHALK_PALETTES[0]): HTMLCanvasElement {
   const canvas = document.createElement("canvas")
   canvas.width = Math.max(1, Math.round(vp.width * dpr))
   canvas.height = Math.max(1, Math.round(vp.height * dpr))
   const ctx = canvas.getContext("2d")!
   ctx.scale(dpr, dpr)
   drawGround(ctx, vp)
-  const chalk = renderChalk(board, vp, dpr)
+  const chalk = renderChalk(board, vp, dpr, palette)
   ctx.drawImage(chalk, 0, 0, vp.width, vp.height)
   return canvas
 }
@@ -114,7 +115,7 @@ function drawTuft(ctx: CanvasRenderingContext2D, x: number, y: number, size: num
 }
 
 /** The chalk drawing on its own layer, so it can be roughened with "erase" specks like real chalk. */
-function renderChalk(board: Board, vp: Viewport, dpr: number): HTMLCanvasElement {
+function renderChalk(board: Board, vp: Viewport, dpr: number, palette: ChalkPalette): HTMLCanvasElement {
   const canvas = document.createElement("canvas")
   canvas.width = Math.max(1, Math.round(vp.width * dpr))
   canvas.height = Math.max(1, Math.round(vp.height * dpr))
@@ -124,8 +125,8 @@ function renderChalk(board: Board, vp: Viewport, dpr: number): HTMLCanvasElement
   const lw = Math.max(2.2, vp.scale * 0.045)
 
   // Faint chalk smudge fill inside the squares.
-  ctx.fillStyle = "rgba(251, 246, 234, 0.06)"
   for (const cell of board.cells.values()) {
+    ctx.fillStyle = `rgba(${chalkColor(palette, cell.row)}, 0.06)`
     const a = vp.toScreen({ x: cell.x, y: cell.y + cell.h })
     ctx.fillRect(a.x, a.y, cell.w * vp.scale, cell.h * vp.scale)
   }
@@ -137,14 +138,15 @@ function renderChalk(board: Board, vp: Viewport, dpr: number): HTMLCanvasElement
       { x: cell.x + cell.w, y: cell.y + cell.h },
       { x: cell.x, y: cell.y + cell.h },
     ].map((p) => vp.toScreen(p))
-    for (let i = 0; i < 4; i++) chalkLine(ctx, corners[i], corners[(i + 1) % 4], lw, rng)
+    for (let i = 0; i < 4; i++) chalkLine(ctx, corners[i], corners[(i + 1) % 4], lw, rng, chalkColor(palette, cell.row))
   }
 
   if (board.rest) {
+    const restColor = chalkColor(palette, board.rows.length)
     const c = vp.toScreen({ x: board.rest.cx, y: board.rest.cy })
     const r = board.rest.r * vp.scale
     for (let pass = 0; pass < 3; pass++) {
-      ctx.strokeStyle = `rgba(251, 246, 234, ${0.35 + rng() * 0.25})`
+      ctx.strokeStyle = `rgba(${restColor}, ${0.35 + rng() * 0.25})`
       ctx.lineWidth = lw * (0.7 + rng() * 0.5)
       ctx.beginPath()
       const steps = 40
@@ -160,16 +162,16 @@ function renderChalk(board: Board, vp: Viewport, dpr: number): HTMLCanvasElement
     }
     const left = vp.toScreen({ x: board.rest.cx - board.rest.r, y: board.rest.cy })
     const right = vp.toScreen({ x: board.rest.cx + board.rest.r, y: board.rest.cy })
-    chalkLine(ctx, left, right, lw, rng)
-    chalkText(ctx, "REST", vp.toScreen({ x: board.rest.cx, y: board.rest.cy + board.rest.r * 0.42 }), vp.scale * 0.3, rng)
+    chalkLine(ctx, left, right, lw, rng, restColor)
+    chalkText(ctx, "REST", vp.toScreen({ x: board.rest.cx, y: board.rest.cy + board.rest.r * 0.42 }), vp.scale * 0.3, rng, restColor)
   }
 
   // Throw line across the front of the board.
   const half = board.bounds.w / 2 - 0.15
-  chalkLine(ctx, vp.toScreen({ x: -half, y: 0 }), vp.toScreen({ x: half, y: 0 }), lw * 0.8, rng, true)
+  chalkLine(ctx, vp.toScreen({ x: -half, y: 0 }), vp.toScreen({ x: half, y: 0 }), lw * 0.8, rng, chalkColor(palette, -1), true)
 
   for (const cell of board.cells.values()) {
-    chalkText(ctx, String(cell.id), vp.toScreen({ x: cell.x + cell.w / 2, y: cell.y + cell.h / 2 }), vp.scale * 0.52, rng)
+    chalkText(ctx, String(cell.id), vp.toScreen({ x: cell.x + cell.w / 2, y: cell.y + cell.h / 2 }), vp.scale * 0.52, rng, chalkColor(palette, cell.row))
   }
 
   // Rough it up: knock tiny holes out of the chalk.
@@ -184,11 +186,11 @@ function renderChalk(board: Board, vp: Viewport, dpr: number): HTMLCanvasElement
   return canvas
 }
 
-function chalkLine(ctx: CanvasRenderingContext2D, a: Vec, b: Vec, width: number, rng: () => number, dashed = false): void {
+function chalkLine(ctx: CanvasRenderingContext2D, a: Vec, b: Vec, width: number, rng: () => number, rgb: string, dashed = false): void {
   ctx.lineCap = "round"
   if (dashed) ctx.setLineDash([width * 3, width * 2.2])
   for (let pass = 0; pass < 3; pass++) {
-    ctx.strokeStyle = `rgba(251, 246, 234, ${0.3 + rng() * 0.3})`
+    ctx.strokeStyle = `rgba(${rgb}, ${0.3 + rng() * 0.3})`
     ctx.lineWidth = width * (0.55 + rng() * 0.6)
     const j = width * 0.35
     ctx.beginPath()
@@ -201,12 +203,12 @@ function chalkLine(ctx: CanvasRenderingContext2D, a: Vec, b: Vec, width: number,
   ctx.setLineDash([])
 }
 
-function chalkText(ctx: CanvasRenderingContext2D, text: string, at: Vec, size: number, rng: () => number): void {
+function chalkText(ctx: CanvasRenderingContext2D, text: string, at: Vec, size: number, rng: () => number, rgb: string): void {
   ctx.textAlign = "center"
   ctx.textBaseline = "middle"
   ctx.font = `400 ${Math.round(size * 1.12)}px "Gochi Hand", "Chalkboard SE", "Marker Felt", "Comic Sans MS", sans-serif`
   for (let pass = 0; pass < 3; pass++) {
-    ctx.fillStyle = `rgba(251, 246, 234, ${0.35 + rng() * 0.3})`
+    ctx.fillStyle = `rgba(${rgb}, ${0.35 + rng() * 0.3})`
     ctx.fillText(text, at.x + (rng() - 0.5) * 1.6, at.y + (rng() - 0.5) * 1.6)
   }
 }

@@ -1,7 +1,7 @@
 /**
  * Types for the parts of the Vatar Games SDK v1 this game uses, as documented at
  * https://lagoslife.app/developers/docs and loaded from https://lagoslife.app/sdk/vatar-games-v1.js.
- * Purchases and matches exist in the SDK but are deliberately not used in this MVP.
+ * Matches exist in the SDK but are deliberately not used.
  */
 export interface VatarPlayer {
   /** Per-game pseudonym: p_… (live) or t_… (test). */
@@ -27,9 +27,23 @@ export interface VatarLeaderboard {
   me: { rank: number | null; label: string; score: number } | null
 }
 
+/** { purchaseId, productId } from purchase(), onPurchase and purchases(). */
+export interface VatarPurchaseRef {
+  purchaseId: string
+  productId: string
+}
+
 export interface VatarSdk {
   version: string
   init(): Promise<VatarInitResult>
+  /** A fresh session token for our server (they last 15 minutes). */
+  session(): Promise<{ session: string; exp: number }>
+  /** Opens the world's own pay sheet; resolves once Vatar's server has the payment confirmed. */
+  purchase(productId: string): Promise<VatarPurchaseRef>
+  /** Paid purchases our server hasn't marked delivered yet. */
+  purchases(): Promise<VatarPurchaseRef[]>
+  /** A purchase confirmed while no purchase() call was waiting (e.g. after paying on the provider's page). */
+  onPurchase(fn: (p: VatarPurchaseRef) => void): () => void
   submitScore(n: number): Promise<VatarScoreResult>
   leaderboard(): Promise<VatarLeaderboard>
   onPause(fn: () => void): () => void
@@ -44,6 +58,11 @@ export type VatarErrorCode =
   | "off"
   | "signed_out"
   | "too_soon"
+  | "busy"
+  | "cancelled"
+  | "payment_failed"
+  | "not_for_sale"
+  | "owned"
   | "bad_request"
   | "error"
   | (string & {})

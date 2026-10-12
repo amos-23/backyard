@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 import { Platform } from "../src/platform/platform"
 import { type Clock, SCORE_INTERVAL_MS, ScoreQueue, type SubmissionStatus } from "../src/platform/score-queue"
 import type { VatarSdk } from "../src/platform/vatar-types"
+import { fakeSdk } from "./helpers/fake-sdk"
 
 /** A manual clock so rate-limit timing can be stepped precisely. */
 function fakeClock() {
@@ -41,22 +42,6 @@ const flushPromises = async () => {
 }
 
 const sdkError = (code: string) => Object.assign(new Error(`Vatar: ${code}`), { code })
-
-function fakeSdk(overrides: Partial<VatarSdk> = {}): VatarSdk & { pause: () => void; resume: () => void } {
-  let pause = () => {}
-  let resume = () => {}
-  return {
-    version: "1",
-    init: vi.fn(async () => ({ player: { id: "t_1", name: "Tolu", avatar: null }, session: "vtr1.x", mode: "test" as const })),
-    submitScore: vi.fn(async (n: number) => ({ best: n, accepted: true })),
-    leaderboard: vi.fn(async () => ({ top: [{ rank: 1, name: "Tolu", score: 900 }], me: { rank: 1, label: "#1", score: 900 } })),
-    onPause: (fn) => ((pause = fn), () => {}),
-    onResume: (fn) => ((resume = fn), () => {}),
-    pause: () => pause(),
-    resume: () => resume(),
-    ...overrides,
-  }
-}
 
 describe("ScoreQueue", () => {
   it("sends at most one score per 20 seconds and only the highest pending one", async () => {

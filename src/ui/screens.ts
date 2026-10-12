@@ -82,6 +82,7 @@ export interface HomeProps {
   onHowTo(): void
   onLeaderboard(): void
   onToggleMute(): void
+  onChalk(): void
 }
 
 export function homeScreen(p: HomeProps): HTMLElement {
@@ -116,6 +117,7 @@ export function homeScreen(p: HomeProps): HTMLElement {
       { class: "home-actions" },
       button("Play", p.onPlay, { kind: "primary", iconName: "play", id: "play" }),
       h("div", { class: "row" }, button("How to play", p.onHowTo, { iconName: "help", id: "howto" }), button("Leaderboard", p.onLeaderboard, { iconName: "trophy", id: "leaderboard" })),
+      button("Chalk colours", p.onChalk, { kind: "ghost", iconName: "palette", id: "chalk" }),
     ),
     h("footer", { class: "footer" }, "A Lagos Life game"),
   )

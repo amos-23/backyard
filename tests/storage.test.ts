@@ -28,14 +28,28 @@ describe("local persistence", () => {
     localStorage.setItem("suwe.v1.settings", "{}")
     expect(storage.getBest()).toBe(0)
     expect(storage.getLocalScores()).toEqual([])
-    expect(storage.getSettings()).toEqual({ muted: false, tutorialDone: false })
+    expect(storage.getSettings()).toEqual({ muted: false, tutorialDone: false, chalk: "classic" })
   })
 
   it("persists settings", () => {
     storage.updateSettings({ muted: true })
-    expect(storage.getSettings()).toEqual({ muted: true, tutorialDone: false })
-    storage.updateSettings({ tutorialDone: true })
-    expect(storage.getSettings()).toEqual({ muted: true, tutorialDone: true })
+    expect(storage.getSettings()).toEqual({ muted: true, tutorialDone: false, chalk: "classic" })
+    storage.updateSettings({ tutorialDone: true, chalk: "lagoon" })
+    expect(storage.getSettings()).toEqual({ muted: true, tutorialDone: true, chalk: "lagoon" })
+  })
+
+  it("upgrades settings saved before chalk colours existed", () => {
+    localStorage.setItem("suwe.v1.settings", JSON.stringify({ muted: true, tutorialDone: true }))
+    expect(storage.getSettings()).toEqual({ muted: true, tutorialDone: true, chalk: "classic" })
+  })
+
+  it("caches server-confirmed ownership per player and ignores corrupt data", () => {
+    expect(storage.getCachedOwned("test:t_1")).toEqual([])
+    storage.setCachedOwned("test:t_1", ["chalk_pack"])
+    expect(storage.getCachedOwned("test:t_1")).toEqual(["chalk_pack"])
+    expect(storage.getCachedOwned("test:t_2")).toEqual([])
+    localStorage.setItem("suwe.v1.owned", JSON.stringify({ "test:t_1": "yes" }))
+    expect(storage.getCachedOwned("test:t_1")).toEqual([])
   })
 
   it("tracks the highest level reached", () => {

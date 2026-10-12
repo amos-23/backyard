@@ -12,7 +12,9 @@ out over the line. Three lives, ten levels, with wind, aim sway and a shrinking 
 - **Assets:** all artwork is procedural canvas or inline SVG, sound is synthesised with Web Audio,
   and the fonts are bundled from npm (`@fontsource`). Nothing is loaded from a remote host except
   the Vatar SDK.
-- **Backend:** none. This MVP has no purchases or matches, so there are no secrets and no server.
+- **Backend:** two small Netlify Functions that verify and deliver the one optional purchase, the
+  cosmetic Colourful Chalk Pack. They hold the Vatar secret and store entitlements in Netlify
+  Blobs. The game itself needs no server and stays fully playable without them.
 
 ## Quick start
 
@@ -51,6 +53,7 @@ src/
     board.ts                Board layouts (rows of numbered squares)
     rules.ts                Regional rule variants (skip/pick-up/round trip/two-feet/lines)
     levels.ts               The ten levels + tutorial: targets, scatter, sway, wind, balance time
+    chalk.ts                Chalk colour palettes (cosmetic); which ones the pack unlocks
   core/                     Pure game logic, no DOM, fully unit-tested
     board.ts                Geometry built from a layout; hit tests
     throw.ts                Drag→aim mapping, sway, landing resolution, throw judging
@@ -65,10 +68,20 @@ src/
     load-sdk.ts             Waits for the async SDK script (with timeout)
     platform.ts             The adapter the rest of the game talks to
     score-queue.ts          Rate-limited, de-duplicating score submission
+  shop/
+    chalk-shop.ts           Colourful Chalk Pack flow: buy, verify, restore (unlocks only on server OK)
+    api.ts                  Client for our /api/claim and /api/entitlements
   storage/storage.ts        localStorage persistence with safe fallbacks
   audio/sound.ts            Synthesised sound effects, mute, pause-aware
   ui/                       Screens, modals, HUD, SVG art
   app.ts                    Screen routing and glue
+server/                     Server-only code (never bundled into the game)
+  vatar-api.ts              Documented Vatar API: /session/verify, /purchases/{id}, /deliver
+  purchases.ts              Claim + entitlement logic (verify, grant once, mark delivered)
+  entitlements.ts           Entitlement store on Netlify Blobs (idempotent per purchase)
+  http.ts                   Request/response handling for the endpoints
+  netlify-deps.ts           Reads VATAR_SECRET; opens the Blobs store
+netlify/functions/          claim.mts, entitlements.mts (POST /api/claim, /api/entitlements)
 tests/                      Vitest unit tests
 e2e/                        Playwright smoke + framed-host tests
 ```
@@ -119,6 +132,9 @@ Everything the game uses is documented at https://lagoslife.app/developers/docs:
 | Leaderboard score | `Vatar.submitScore(n)` → `{ best, accepted }` | `ScoreQueue` |
 | Leaderboard | `Vatar.leaderboard()` → `{ top, me }` | `Platform.leaderboard()` |
 | Backgrounding / pay sheet | `Vatar.onPause` / `Vatar.onResume` | `App` → pause overlay, timers frozen, sound suspended |
+| Buy the Colourful Chalk Pack | `Vatar.purchase("chalk_pack")` → `{ purchaseId, productId }` | `ChalkShop.buy()` |
+| Paid while away / after a crash | `Vatar.onPurchase(fn)`, `Vatar.purchases()` | `ChalkShop.start()` |
+| Session token for our server | `Vatar.session()` → `{ session, exp }` | `ChalkShop` (fresh token per server call) |
 
 Behaviour that follows the documentation:
 
@@ -135,7 +151,76 @@ Behaviour that follows the documentation:
   timeout puts the game in local mode. `signed_out` and `off` are shown as "unavailable", with
   scores kept on the device. A local score is never shown as posted.
 - **Sound.** Sound starts only after the first tap. Sound and timers stop on pause.
-- **Not used.** Purchases, matches, payments and real money aren't part of this MVP.
+- **Not used.** Matches, staking, webhooks (optional in the docs) and anything real-money beyond
+  the one cosmetic product.
+
+## Colourful Chalk Pack (in-game purchase)
+
+| | |
+| --- | --- |
+| Product ID | `chalk_pack` |
+| Name | Colourful Chalk Pack |
+| Price | ₦100 (the pay sheet shows the price from Vatar's records) |
+| Type | One-off |
+| Description | Unlock colourful chalk colours for your Suwe board. |
+
+It's cosmetic only: five extra chalk palettes (Hibiscus pink, Lagoon blue, Lilac, Sunset orange,
+Rainbow). They change the colour of the chalk lines and numbers and nothing else: not the geometry,
+hit areas, scoring, lives, difficulty or leaderboard. The palettes avoid the yellow target, mint
+hint and red fault colours, so every board reads the same. Players find it under **Chalk colours**
+on the home screen, and can preview locked colours before buying.
+
+### Flow
+
+1. The player taps **Buy · ₦100**. `Vatar.purchase("chalk_pack")` opens Vatar's pay sheet, which
+   pauses the game.
+2. The promise resolves once Vatar has confirmed payment. The pack is **still locked** at this
+   point.
+3. The game gets a fresh token with `Vatar.session()` and sends `POST /api/claim { session,
+   purchaseId }` to our server.
+4. Our server:
+   - verifies the player with `POST /session/verify`;
+   - fetches the purchase with `GET /purchases/{id}` and checks that it is `paid` (or already
+     `delivered`), belongs to this `playerId`, matches the session's mode and is for `chalk_pack`;
+   - records the entitlement, once per `purchaseId` (an `onlyIfNew` write in Netlify Blobs);
+   - calls `POST /purchases/{id}/deliver`.
+5. Only when the server answers OK does the game unlock the colours. It caches that answer locally
+   for instant display next time.
+6. **At every start**, the game re-checks ownership with `POST /api/entitlements` (which works on any
+   device, because delivered purchases no longer appear in `Vatar.purchases()`). It also claims
+   anything still in `Vatar.purchases()` and listens to `Vatar.onPurchase`.
+
+### Outcomes
+
+- **Cancelled** (`cancelled`) or **failed** (`payment_failed`): the pack stays locked, with a
+  message.
+- **`busy`, `not_for_sale`, `rate_limited`, `signed_out`, `off`:** an explanatory message; the pack
+  stays locked.
+- **`owned`:** the game re-checks with our server and restores the purchase. It never asks an owner
+  to pay again, and the Buy button is hidden once the pack is owned.
+- **`timeout`:** the game checks for a paid, undelivered purchase and claims it.
+- **Paid, but our server is unreachable:** the pack stays locked and **Try again** is shown. The
+  purchase stays in `Vatar.purchases()`, so it is also claimed automatically next start.
+- **Server rejects the purchase** (refunded, another player's, wrong product): the pack stays
+  locked.
+- **Repeated or concurrent claims:** granted once and delivered once. Later claims answer
+  `alreadyClaimed: true`.
+- **Purchase service down at start:** buying is paused, so nobody pays for something we can't
+  deliver. The game plays normally.
+- **Outside Lagos Life:** colours can be previewed, but buying is unavailable.
+
+### Server endpoints
+
+| Endpoint | Body | Success | Errors |
+| --- | --- | --- | --- |
+| `POST /api/claim` | `{ session, purchaseId }` | `200 { ok, productId, owned, delivered, alreadyClaimed }` | `400 bad_request`, `401 session_invalid`, `403 not_your_purchase`, `404 purchase_not_found`, `409 refunded`, `422 wrong_product`, `503 unavailable` / `not_configured` |
+| `POST /api/entitlements` | `{ session }` | `200 { ok, owned: ["chalk_pack"] }` | `400`, `401`, `503` |
+
+- Responses never include amounts, player ids or anything secret, and are sent with
+  `Cache-Control: no-store`.
+- Each function is rate-limited to 120 requests a minute per IP, because every call costs a Vatar
+  API request (600 a minute per game).
+- Logs contain purchase ids and outcomes only, never the secret or session tokens.
 
 ## Deployment
 
@@ -164,10 +249,27 @@ npm run build        # outputs dist/
 
 ### Environment variables
 
-None are required. The game uses no secrets, and the Vatar SDK identifies the game by the address
-it was approved for. **Never** put a Vatar secret key (`vtr_test_…` / `vtr_live_…`) or a webhook
-secret in this frontend. Those keys are only needed on a server for purchases and matches, which
-this MVP doesn't use.
+| Name | Where | Value |
+| --- | --- | --- |
+| `VATAR_SECRET` | Netlify → Site configuration → Environment variables, scope **Functions** | `vtr_test_…` while testing in the sandbox; `vtr_live_…` once Vatar approves the game |
+
+- This is the name the Vatar docs use. Without it, the purchase endpoints answer
+  `503 not_configured`, and buying is paused while the rest of the game works.
+- **Never** give it a `VITE_` prefix, put it in `netlify.toml` or commit it. Vite only exposes
+  `VITE_` variables to the browser, and the server code reads it from `process.env` at run time.
+- Not needed: `VATAR_WEBHOOK_SECRET` (webhooks are optional and not implemented) and
+  `VATAR_RESULTS_SECRET` (multiplayer only).
+
+### Storage
+
+Entitlements live in **Netlify Blobs**, in the store `suwe-entitlements`, using strong
+consistency. Keys are kept separate for test and live:
+
+- `test|live/players/{playerId}`
+- `test|live/purchases/{purchaseId}`
+
+Blobs works automatically for functions deployed on Netlify, so there's nothing to provision. To
+inspect it, go to Netlify → Blobs, or run `netlify blobs:list suwe-entitlements`.
 
 ## Vatar sandbox testing
 
@@ -175,27 +277,43 @@ this MVP doesn't use.
    Suwe (the page title is "Suwe") and sends the header, with
    `curl -sI https://your-domain/ | grep -i frame-ancestors`.
 2. **Register.** Go to https://lagoslife.app/developers and choose *Get your keys*. Enter the
-   studio, contact email, game name "Suwe", the HTTPS address and a one-line description. Store the
-   test secret it shows you somewhere safe. This game doesn't need it, but you'll want it if you
-   add purchases later.
-3. **Play in the sandbox.** Open your sandbox player at `/developers/sandbox/<draft>`. Check that:
+   studio, contact email, game name "Suwe", the HTTPS address and a one-line description.
+3. **Secret.** Put the test secret in Netlify as `VATAR_SECRET` (Functions scope), then redeploy.
+   Check it took effect: `curl -s -X POST -H 'Content-Type: application/json' -d '{"session":"x"}'
+   https://your-domain/api/entitlements` should return `401 session_invalid`, meaning Vatar
+   accepted the secret and rejected the dummy session. `503 not_configured` means the secret is
+   missing, wrong or rotated.
+4. **Product.** In the Vatar dashboard, add the product: id `chalk_pack`, name "Colourful Chalk
+   Pack", price ₦100, one-off.
+5. **Play in the sandbox.** Open your sandbox player at `/developers/sandbox/<draft>`. Check that:
    - the home badge says **Vatar sandbox** and the greeting shows your Lagos Life display name;
    - finishing level 1 says *"Sandbox: Posted … to the leaderboard"*, and the Leaderboard screen
      shows the test board with your place;
    - backgrounding the phone, or anything that pauses the game, shows the pause overlay, with the
      balance timer frozen and the sound stopped.
-4. **Review checklist.** Test at 375 × 812 in portrait by touch. Sound must start only after the
+6. **Test the purchase.** Go to Home → **Chalk colours**:
+   - **Fail (test):** "didn't go through", and the pack stays locked.
+   - **Close the sheet:** "Purchase cancelled", and the pack stays locked.
+   - **Pay (test):** "Confirming your purchase…", then "Colourful Chalk Pack unlocked". The
+     dashboard checklist should tick *test purchase made*, *purchase verified by your server* and
+     *marked delivered*. Netlify's function logs show `claim ok: purchase … granted,
+     delivered=true`.
+   - **Reload, or open it on another device:** it stays unlocked, and Buy is not offered again.
+   - **Start a run:** the board uses the chosen colour.
+7. **Review checklist.** Test at 375 × 812 in portrait by touch. Sound must start only after the
    first tap. There are no outside links, logins or payments.
-5. **Submit.** Add the listing in the dashboard (512 px PNG/JPEG/WebP icon, 3–5 screenshots, a short
+8. **Submit.** Add the listing in the dashboard (512 px PNG/JPEG/WebP icon, 3–5 screenshots, a short
    description of up to 120 characters), agree to the Developer Agreement and submit for review.
 
 ### Still needs credentials or approval
 
 These steps can't be done from this repo:
 
-- **Integration checklist.** The dashboard's checklist includes test-purchase and server
-  verification items. This game sells nothing, so ask Vatar how the checklist applies to games
-  without products.
+- **Integration checklist.** The purchase items can only tick from a real sandbox purchase
+  (steps 3–6 above), so they need the deployed functions, `VATAR_SECRET` and the `chalk_pack`
+  product.
+- **Refunds.** A purchase refunded *after* it was delivered keeps its entitlement. Revoking it would
+  need the optional webhook, or a periodic re-check.
 - **Real-host tests.** The real sandbox session, the live leaderboard and the real `onPause`
   events from the host need a deployed HTTPS address and a sandbox draft. `npm run e2e:host`
   simulates the host's documented message protocol with the real SDK script, but it isn't a
@@ -207,7 +325,7 @@ These steps can't be done from this repo:
 
 ## Testing notes
 
-- **Unit tests (48):**
+- **Unit tests (80):**
   - geometry and layouts;
   - throw judging (in, wrong square, line, rest area, off-board, accidental taps, range clamp);
   - hop paths for each rule variant;
@@ -220,7 +338,15 @@ These steps can't be done from this repo:
   - the rate-limited score queue and the SDK adapter (local fallback, async SDK load, caching,
     errors, pause/resume);
   - storage, including corrupted data;
-  - score-status wording, which only says "posted" once the SDK confirms an accepted score.
+  - score-status wording, which only says "posted" once the SDK confirms an accepted score;
+  - the purchase server, run against a stand-in for Vatar's documented HTTP contract:
+    - session and purchase verification, delivery, and idempotent and concurrent claims;
+    - another player's, refunded, unpaid, wrong-product and other-mode purchases;
+    - outages and rate limits, missing or wrong secrets, input validation, and no leaks;
+  - the client purchase flow wired to the real server handlers:
+    - unlocking only after verification, cancellation, failure and server outage with retry;
+    - restoring on a new device, after a crash and via `onPurchase`;
+    - duplicate notifications, the SDK's `owned` answer, and a tampered cache.
 - **`e2e/smoke.mjs`:** plays the tutorial by touch swipes and taps, clears level 1, forces faults
   until game over, then tests retry, pausing on page hide, the personal best across reloads, the
   local leaderboard and skipping the tutorial. It also runs a desktop mouse round with
@@ -229,7 +355,10 @@ These steps can't be done from this repo:
   real SDK. It checks sandbox mode, the player name, the leaderboard, score posting, the 20 s
   submission spacing and the `frame-ancestors` header. For `onPause`/`onResume` it checks that the
   balance timer and sound freeze, that the run waits for a Resume tap, and that sound never stays
-  stuck off after a pause on a menu or dialog.
+  stuck off after a pause on a menu or dialog. For purchases, it uses the real server code:
+  - cancel, fail, and pay while the server is down;
+  - then verify and deliver, and check that a repeat claim grants nothing new;
+  - the coloured board in-game, restore on a fresh device, and 360/375/1366 px layouts.
 - **Debug hook:** adding `?debug` to the URL exposes a read-only `window.__suwe.info()` (screen
   positions of squares, the current phase) so the browser tests can aim. It can't change game
   state.

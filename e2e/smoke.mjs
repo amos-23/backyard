@@ -107,6 +107,17 @@ async function playRound(page, opts = {}) {
   await page.screenshot({ path: `${OUT}/02-howto.png` })
   await page.click('[data-testid="back"]')
 
+  // Outside Lagos Life the chalk pack can be previewed but not bought, and nothing is unlocked.
+  await page.click('[data-testid="chalk"]')
+  await page.waitForSelector('[data-screen="chalk"]')
+  await page.waitForFunction(() => /inside Lagos Life/.test(document.querySelector('[data-testid="chalk-offer"]')?.textContent ?? ""), null, { timeout: 12000 })
+  const buyDisabled = await page.isDisabled('[data-testid="chalk-buy"]')
+  await page.click('[data-testid="swatch-lagoon"]')
+  const keptClassic = await page.evaluate(() => (JSON.parse(localStorage.getItem("suwe.v1.settings") ?? "{}").chalk ?? "classic") === "classic")
+  check("local mode: pack can't be bought and locked colours aren't applied", buyDisabled && keptClassic)
+  await page.screenshot({ path: `${OUT}/02b-chalk-local.png` })
+  await page.click('[data-testid="back"]')
+
   // First Play starts the tutorial.
   await page.click('[data-testid="play"]')
   await page.waitForSelector('[data-screen="tutorial"]')
